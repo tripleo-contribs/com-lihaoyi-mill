@@ -1,15 +1,6 @@
-// plugins and dependencies
-import $file.ci.shared
-import $file.ci.upload
-import $ivy.`org.scalaj::scalaj-http:2.4.2`
-import $ivy.`de.tototec::de.tobiasroeser.mill.vcs.version::0.4.0`
-import $ivy.`com.github.lolgab::mill-mima::0.1.1`
-import $ivy.`net.sourceforge.htmlcleaner:htmlcleaner:2.29`
-import $ivy.`com.lihaoyi::mill-contrib-buildinfo:`
-import $ivy.`com.goyeau::mill-scalafix::0.4.0`
-
 // imports
-import com.github.lolgab.mill.mima.{CheckDirection, ProblemFilter, Mima}
+import scala.util.chaining._
+import com.github.lolgab.mill.mima.Mima
 import coursier.maven.MavenRepository
 import de.tobiasroeser.mill.vcs.version.VcsVersion
 import com.goyeau.mill.scalafix.ScalafixModule
@@ -23,9 +14,18 @@ import mill.scalalib.publish._
 import mill.util.Jvm
 import mill.resolve.SelectMode
 import mill.contrib.buildinfo.BuildInfo
-import mill.scalalib.api.Versions
 import mill.T
 import mill.define.Cross
+
+// plugins and dependencies
+import $file.ci.shared
+import $file.ci.upload
+import $ivy.`org.scalaj::scalaj-http:2.4.2`
+import $ivy.`de.tototec::de.tobiasroeser.mill.vcs.version::0.4.0`
+import $ivy.`com.github.lolgab::mill-mima::0.1.1`
+import $ivy.`net.sourceforge.htmlcleaner:htmlcleaner:2.29`
+import $ivy.`com.lihaoyi::mill-contrib-buildinfo:`
+import $ivy.`com.goyeau::mill-scalafix::0.4.0`
 
 object Settings {
   val pomOrg = "com.lihaoyi"
@@ -34,7 +34,7 @@ object Settings {
   val projectUrl = s"https://github.com/${githubOrg}/${githubRepo}"
   val changelogUrl = s"${projectUrl}#changelog"
   val newIssueUrl = s"${projectUrl}/issues/new/choose"
-  val docUrl = "https://mill-build.com"
+  val docUrl = "https://mill-build.org"
   // the exact branches containing a doc root
   val docBranches = Seq()
   // the exact tags containing a doc root
@@ -46,9 +46,10 @@ object Settings {
     "0.11.0-M7"
   )
   val docTags: Seq[String] = Seq(
-    "0.11.10"
+    "0.11.10",
+    "0.11.11"
   )
-  val mimaBaseVersions: Seq[String] = 0.to(10).map("0.11." + _)
+  val mimaBaseVersions: Seq[String] = 0.to(11).map("0.11." + _)
 }
 
 object Deps {
@@ -192,8 +193,14 @@ object Deps {
   val bsp4j = ivy"ch.epfl.scala:bsp4j:2.2.0-M2"
   val fansi = ivy"com.lihaoyi::fansi:0.5.0"
   val jarjarabrams = ivy"com.eed3si9n.jarjarabrams::jarjar-abrams-core:1.14.0"
-  val requests = ivy"com.lihaoyi::requests:0.8.3"
+  val requests = ivy"com.lihaoyi::requests:0.9.0"
   val sonatypeCentralClient = ivy"com.lumidion::sonatype-central-client-requests:0.3.0"
+
+  object RuntimeDeps {
+    val sbtTestInterface = ivy"com.github.sbt:junit-interface:0.13.2"
+    val jupiterInterface = ivy"com.github.sbt.junit:jupiter-interface:0.11.4"
+    def all = Seq(sbtTestInterface, jupiterInterface)
+  }
 
   /** Used to manage transitive versions. */
   val transitiveDeps = Seq(
@@ -211,7 +218,7 @@ object Deps {
     // tests framework (test)
     val scalaCheck = ivy"org.scalacheck::scalacheck:1.18.0"
     val scalaTest = ivy"org.scalatest::scalatest:3.2.19"
-    val utest = ivy"com.lihaoyi::utest:0.8.3"
+    val utest = ivy"com.lihaoyi::utest:0.8.4"
     val zioTest = ivy"dev.zio::zio-test:2.0.22"
   }
 
@@ -230,12 +237,13 @@ def millLastTag: T[String] = T {
 }
 
 def millBinPlatform: T[String] = T {
-  val tag = millLastTag()
-  if (tag.contains("-M")) tag
-  else {
-    val pos = if (tag.startsWith("0.")) 2 else 1
-    tag.split("[.]", pos + 1).take(pos).mkString(".")
-  }
+  //val tag = millLastTag()
+  //if (tag.contains("-M")) tag
+  //else {
+  //  val pos = if (tag.startsWith("0.")) 2 else 1
+  //  tag.split("[.]", pos + 1).take(pos).mkString(".")
+  //}
+  "0.11"
 }
 
 def baseDir = build.millSourcePath
@@ -508,6 +516,23 @@ trait MillStableScalaModule extends MillPublishScalaModule with Mima {
     ),
     ProblemFilter.exclude[ReversedMissingMethodProblem](
       "mill.scalalib.JavaModule.mill$scalalib$JavaModule$$super$runMain"
+    ),
+    // Terminal is sealed, not sure why MIMA still complains
+    ProblemFilter.exclude[ReversedMissingMethodProblem]("mill.eval.Terminal.task"),
+
+    // Not sure why mima is picking up this stuff which is private[mill]
+    ProblemFilter.exclude[Problem]("mill.resolve.*.resolve0"),
+    ProblemFilter.exclude[Problem]("mill.resolve.*.resolveRootModule"),
+
+    // These methods are private so it doesn't matter
+    ProblemFilter.exclude[ReversedMissingMethodProblem]("mill.resolve.Resolve.handleResolved"),
+    ProblemFilter.exclude[Problem]("mill.resolve.*.resolveNonEmptyAndHandle*"),
+    ProblemFilter.exclude[Problem]("mill.resolve.ResolveCore*"),
+    ProblemFilter.exclude[InheritedNewAbstractMethodProblem](
+      "mill.main.MainModule.mill$define$BaseModule0$_setter_$watchedValues_="
+    ),
+    ProblemFilter.exclude[InheritedNewAbstractMethodProblem](
+      "mill.main.MainModule.mill$define$BaseModule0$_setter_$evalWatchedValues_="
     )
   )
   def mimaPreviousVersions: T[Seq[String]] = Settings.mimaBaseVersions
@@ -789,7 +814,21 @@ object scalalib extends MillStableScalaModule {
       ),
       BuildInfo.Value("millCompilerBridgeScalaVersions", bridgeScalaVersions.mkString(",")),
       BuildInfo.Value("millCompilerBridgeVersion", bridgeVersion),
-      BuildInfo.Value("millVersion", millVersion(), "Mill version.")
+      BuildInfo.Value("millVersion", millVersion(), "Mill version."),
+      BuildInfo.Value(
+        "sbtTestInterface",
+        Deps.RuntimeDeps.sbtTestInterface.pipe { d =>
+          s"${d.dep.module.organization.value}:${d.dep.module.name.value}:${d.version}"
+        },
+        "Dependency sbt-test-interface"
+      ),
+      BuildInfo.Value(
+        "jupiterInterface",
+        Deps.RuntimeDeps.jupiterInterface.pipe { d =>
+          s"${d.dep.module.organization.value}:${d.dep.module.name.value}:${d.version}"
+        },
+        "Dependency to jupiter-interface"
+      )
     )
   }
 
@@ -1209,45 +1248,45 @@ object example extends MillScalaModule {
 
     def buildScLines =
       upstreamCross(
-        this.millModuleSegments.parts.dropRight(1).last).valuesToModules.get(List(crossValue)
-      ) match {
+        this.millModuleSegments.parts.dropRight(1).last
+      ).valuesToModules.get(List(crossValue)) match {
         case None =>
           T {
             super.buildScLines()
           }
         case Some(upstream) => T {
-          val upstreamLines = os.read.lines(
-            upstream
-              .testRepoRoot().path / "build.sc"
-          )
-          val lines = os.read.lines(testRepoRoot().path / "build.sc")
+            val upstreamLines = os.read.lines(
+              upstream
+                .testRepoRoot().path / "build.sc"
+            )
+            val lines = os.read.lines(testRepoRoot().path / "build.sc")
 
-          import collection.mutable
-          val groupedLines = mutable.Map.empty[String, mutable.Buffer[String]]
-          var current = Option.empty[String]
-          lines.foreach {
-            case s"//// SNIPPET:$name" =>
-              current = Some(name)
-              groupedLines(name) = mutable.Buffer()
-            case s => groupedLines(current.get).append(s)
-          }
-
-          upstreamLines.flatMap {
-            case s"//// SNIPPET:$name" =>
-              if (name != "END") {
-
+            import collection.mutable
+            val groupedLines = mutable.Map.empty[String, mutable.Buffer[String]]
+            var current = Option.empty[String]
+            lines.foreach {
+              case s"//// SNIPPET:$name" =>
                 current = Some(name)
-                groupedLines(name)
-              } else {
-                current = None
-                Nil
-              }
+                groupedLines(name) = mutable.Buffer()
+              case s => groupedLines(current.get).append(s)
+            }
 
-            case s =>
-              if (current.nonEmpty) None
-              else Some(s)
+            upstreamLines.flatMap {
+              case s"//// SNIPPET:$name" =>
+                if (name != "END") {
+
+                  current = Some(name)
+                  groupedLines(name)
+                } else {
+                  current = None
+                  Nil
+                }
+
+              case s =>
+                if (current.nonEmpty) None
+                else Some(s)
+            }
           }
-        }
       }
   }
   trait ExampleCrossModule extends IntegrationTestCrossModule {
@@ -1750,6 +1789,10 @@ object docs extends Module {
   }
 
   def supplementalFiles = T.source(millSourcePath / "supplemental-ui")
+
+  /**
+   * The doc root ready to be build by antora for the current branch.
+   */
   def devAntoraSources: T[PathRef] = T {
     val dest = T.dest
     os.copy(source().path, dest, mergeFolders = true)
@@ -1757,12 +1800,19 @@ object docs extends Module {
     PathRef(dest)
   }
 
-  def sanitizeAntoraYml(dest: os.Path,
-                        version: String,
-                        millVersion: String,
-                        millLastTag: String) = {
+  def sanitizeAntoraYml(
+      dest: os.Path,
+      version: String,
+      millVersion: String,
+      millLastTag: String
+  ): Unit = {
+    val isPreRelease = (millVersion != millLastTag) || Seq("-M", "-RC").exists(millVersion.contains)
     val lines = os.read(dest / "antora.yml").linesIterator.map {
-      case s"version:$_" => s"version: '$version'\ndisplay-version: '$millVersion'"
+      case s"version:$_" =>
+        if (isPreRelease)
+          s"version: '${version}'\ndisplay-version: '${millVersion}'\nprerelease: true"
+        else
+          s"version: '${version}'\ndisplay-version: '${millVersion}'"
       case s"    mill-version:$_" => s"    mill-version: '$millVersion'"
       case s"    mill-last-tag:$_" => s"    mill-last-tag: '$millLastTag'"
       case l => l
@@ -1771,7 +1821,7 @@ object docs extends Module {
   }
 
   def githubPagesPlaybookText(authorMode: Boolean) = T.task { extraSources: Seq[os.Path] =>
-    val taggedSources = for(path <- extraSources) yield {
+    val taggedSources = for (path <- extraSources) yield {
       s"""    - url: ${baseDir}
          |      start_path: ${path.relativeTo(baseDir)}
          |""".stripMargin
@@ -1826,8 +1876,8 @@ object docs extends Module {
        |""".stripMargin
   }
 
-  def oldDocSources = T{
-    for(oldVersion <- Settings.docTags) yield {
+  def oldDocSources = T {
+    for (oldVersion <- Settings.docTags) yield {
       val checkout = T.dest / oldVersion
       os.proc("git", "clone", T.workspace / ".git", checkout).call(stdout = os.Inherit)
       os.proc("git", "checkout", oldVersion).call(cwd = checkout, stdout = os.Inherit)
@@ -1862,22 +1912,6 @@ object docs extends Module {
       createFolders = true
     )
     T.log.errorStream.println("Running Antora ...")
-//    // check xrefs
-//    runAntora(
-//      npmDir = npmBase(),
-//      workDir = docSite,
-//      args = Seq(
-//        "--generator",
-//        "@antora/xref-validator",
-//        playbook.last,
-//        "--to-dir",
-//        siteDir.toString(),
-//        "--attribute",
-//        "page-pagination"
-//      ) ++
-//        Seq("--fetch").filter(_ => !authorMode)
-//    )
-    // generate site (we can skip the --fetch now)
     runAntora(
       npmDir = npmBase(),
       workDir = docSite,
@@ -1888,7 +1922,7 @@ object docs extends Module {
         "--attribute",
         "page-pagination"
       ) ++
-        Seq("--fetch").filter(_ => !authorMode)
+        Option.when(!authorMode)("--fetch").toSeq
     )
     os.write(siteDir / ".nojekyll", "")
 
@@ -2083,7 +2117,7 @@ val dummyDeps: Seq[Dep] = Seq(
   Deps.acyclic,
   Deps.scalacScoverage2Plugin,
   ivy"com.lihaoyi:::ammonite:${Deps.ammoniteVersion}"
-) ++ Deps.transitiveDeps
+) ++ Deps.transitiveDeps ++ Deps.RuntimeDeps.all
 
 implicit object DepSegment extends Cross.ToSegments[Dep]({ dep =>
       val depString = formatDep(dep)

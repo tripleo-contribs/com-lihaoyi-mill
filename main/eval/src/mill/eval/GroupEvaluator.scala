@@ -22,7 +22,7 @@ private[mill] trait GroupEvaluator {
   def workspace: os.Path
   def outPath: os.Path
   def externalOutPath: os.Path
-  def rootModule: mill.define.BaseModule
+  def rootModules: Seq[mill.define.BaseModule]
   def classLoaderSigHash: Int
   def classLoaderIdentityHash: Int
   def workerCache: mutable.Map[Segments, (Int, Val)]
@@ -355,6 +355,7 @@ private[mill] trait GroupEvaluator {
             mill.api.SystemStreams.withStreams(multiLogger.systemStreams) {
               try task.evaluate(args).map(Val(_))
               catch {
+                case f: Result.Failing[Val] => f
                 case NonFatal(e) =>
                   Result.Exception(
                     e,
