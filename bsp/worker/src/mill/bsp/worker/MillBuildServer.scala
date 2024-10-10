@@ -3,9 +3,8 @@ package mill.bsp.worker
 import ch.epfl.scala.bsp4j
 import ch.epfl.scala.bsp4j._
 import com.google.gson.JsonObject
-import mill.T
 import mill.api.{DummyTestReporter, Result, Strict}
-import mill.bsp.BspServerResult
+import mill.bsp.{BspServerResult, Constants}
 import mill.bsp.worker.Utils.{makeBuildTarget, outputPaths, sanitizeUri}
 import mill.define.Segment.Label
 import mill.define.{Args, Discover, ExternalModule, Task}
@@ -34,7 +33,9 @@ private class MillBuildServer(
 ) extends ExternalModule
     with BuildServer {
 
-  lazy val millDiscover: Discover[this.type] = Discover[this.type]
+  import MillBuildServer._
+
+  lazy val millDiscover: Discover = Discover[this.type]
 
   private[worker] var cancellator: Boolean => Unit = shutdownBefore => ()
   private[worker] var onSessionEnd: Option[BspServerResult => Unit] = None
@@ -72,7 +73,7 @@ private class MillBuildServer(
 
       // TODO: scan BspModules and infer their capabilities
 
-      val supportedLangs = Seq("java", "scala").asJava
+      val supportedLangs = Constants.languages.asJava
       val capabilities = new BuildServerCapabilities
 
       capabilities.setBuildTargetChangedProvider(false)
@@ -155,7 +156,7 @@ private class MillBuildServer(
   override def workspaceBuildTargets(): CompletableFuture[WorkspaceBuildTargetsResult] =
     completableTasksWithState(
       "workspaceBuildTargets",
-      targetIds = _.bspModulesById.keySet.toSeq,
+      targetIds = _.bspModulesIdList.map(_._1),
       tasks = { case m: BspModule => m.bspBuildTargetData }
     ) { (ev, state, id, m: BspModule, bspBuildTargetData) =>
       val depsIds = m match {
@@ -174,14 +175,12 @@ private class MillBuildServer(
             bsp4j.ScalaPlatform.forValue(d.platform.number),
             d.jars.asJava
           )
+          for (jvmBuildTarget <- d.jvmBuildTarget)
+            target.setJvmBuildTarget(MillBuildServer.jvmBuildTarget(jvmBuildTarget))
           Some((dataKind, target))
 
         case Some((dataKind, d: JvmBuildTarget)) =>
-          val target = new bsp4j.JvmBuildTarget().tap { it =>
-            d.javaHome.foreach(jh => it.setJavaHome(jh.uri))
-            d.javaVersion.foreach(jv => it.setJavaVersion(jv))
-          }
-          Some((dataKind, target))
+          Some((dataKind, jvmBuildTarget(d)))
 
         case Some((dataKind, d)) =>
           debug(s"Unsupported dataKind=${dataKind} with value=${d}")
@@ -230,13 +229,12 @@ private class MillBuildServer(
       targetIds = _ => sourcesParams.getTargets.asScala.toSeq,
       tasks = {
         case module: MillBuildRootModule =>
-          T.task {
-            module.scriptSources().map(p => sourceItem(p.path, false)) ++
-              module.sources().map(p => sourceItem(p.path, false)) ++
+          Task.Anon {
+            module.sources().map(p => sourceItem(p.path, false)) ++
               module.generatedSources().map(p => sourceItem(p.path, true))
           }
         case module: JavaModule =>
-          T.task {
+          Task.Anon {
             module.sources().map(p => sourceItem(p.path, false)) ++
               module.generatedSources().map(p => sourceItem(p.path, true))
           }
@@ -254,9 +252,9 @@ private class MillBuildServer(
   override def buildTargetInverseSources(p: InverseSourcesParams)
       : CompletableFuture[InverseSourcesResult] = {
     completable(s"buildtargetInverseSources ${p}") { state =>
-      val tasksEvaluators = state.bspModulesById.iterator.collect {
+      val tasksEvaluators = state.bspModulesIdList.iterator.collect {
         case (id, (m: JavaModule, ev)) =>
-          T.task {
+          Task.Anon {
             val src = m.allSourceFiles()
             val found = src.map(sanitizeUri).contains(
               p.getTextDocument.getUri
@@ -265,11 +263,9 @@ private class MillBuildServer(
           } -> ev
       }.toSeq
 
-      val ids = tasksEvaluators
-        .groupMap(_._2)(_._1)
+      val ids = groupList(tasksEvaluators)(_._2)(_._1)
         .flatMap { case (ev, ts) => ev.evalOrThrow()(ts) }
         .flatten
-        .toSeq
 
       new InverseSourcesResult(ids.asJava)
     }
@@ -295,7 +291,7 @@ private class MillBuildServer(
       targetIds = _ => p.getTargets.asScala.toSeq,
       tasks = {
         case m: JavaModule =>
-          T.task {
+          Task.Anon {
             (
               m.defaultResolver().resolveDeps(
                 m.transitiveCompileIvyDeps() ++ m.transitiveIvyDeps(),
@@ -334,7 +330,7 @@ private class MillBuildServer(
       hint = "buildTargetDependencyModules",
       targetIds = _ => params.getTargets.asScala.toSeq,
       tasks = { case m: JavaModule =>
-        T.task { (m.transitiveCompileIvyDeps(), m.transitiveIvyDeps(), m.unmanagedClasspath()) }
+        Task.Anon { (m.transitiveCompileIvyDeps(), m.transitiveIvyDeps(), m.unmanagedClasspath()) }
       }
     ) {
       case (
@@ -364,8 +360,8 @@ private class MillBuildServer(
       s"buildTargetResources ${p}",
       targetIds = _ => p.getTargets.asScala.toSeq,
       tasks = {
-        case m: JavaModule => T.task { m.resources() }
-        case _ => T.task { Nil }
+        case m: JavaModule => Task.Anon { m.resources() }
+        case _ => Task.Anon { Nil }
       }
     ) {
       case (ev, state, id, m, resources) =>
@@ -387,7 +383,7 @@ private class MillBuildServer(
         case (m: SemanticDbJavaModule, ev) if clientWantsSemanticDb =>
           (m.compiledClassesAndSemanticDbFiles, ev)
         case (m: JavaModule, ev) => (m.compile, ev)
-        case (m, ev) => T.task {
+        case (m, ev) => Task.Anon {
             Result.Failure(
               s"Don't know how to compile non-Java target ${m.bspBuildTarget.displayName}"
             )
@@ -446,7 +442,7 @@ private class MillBuildServer(
       }.get
 
       val args = params.getArguments.getOrElse(Seq.empty[String])
-      val runTask = module.run(T.task(Args(args)))
+      val runTask = module.run(Task.Anon(Args(args)))
       val runResult = ev.evaluate(
         Strict.Agg(runTask),
         Utils.getBspLoggedReporterPool(runParams.getOriginId, state.bspIdByModule, client),
@@ -567,7 +563,7 @@ private class MillBuildServer(
           case ((msg, cleaned), targetId) =>
             val (module, ev) = state.bspModulesById(targetId)
             val mainModule = new MainModule {
-              override implicit def millDiscover: Discover[_] = Discover[this.type]
+              override implicit def millDiscover: Discover = Discover[this.type]
             }
             val compileTargetName = (module.millModuleSegments ++ Label("compile")).render
             debug(s"about to clean: ${compileTargetName}")
@@ -643,9 +639,8 @@ private class MillBuildServer(
         tasks.lift.apply(m).map(ts => (ts, (ev, id)))
       }
 
-      val evaluated = tasksSeq
-        // group by evaluator (different root module)
-        .groupMap(_._2)(_._1)
+      // group by evaluator (different root module)
+      val evaluated = groupList(tasksSeq.toSeq)(_._2)(_._1)
         .map { case ((ev, id), ts) =>
           val results = ev.evaluate(ts)
           val failures = results.results.collect {
@@ -676,7 +671,7 @@ private class MillBuildServer(
             }
         }
 
-      agg(evaluated.flatten.toSeq.asJava, state)
+      agg(evaluated.flatten.asJava, state)
     }
   }
 
@@ -773,4 +768,24 @@ private class MillBuildServer(
   override def onRunReadStdin(params: ReadParams): Unit = {
     debug("onRunReadStdin is current unsupported")
   }
+}
+
+private object MillBuildServer {
+
+  /**
+   * Same as Iterable.groupMap, but returns a sequence instead of a map, and preserves
+   * the order of appearance of the keys from the input sequence
+   */
+  private def groupList[A, K, B](seq: Seq[A])(key: A => K)(f: A => B): Seq[(K, Seq[B])] = {
+    val keyIndices = seq.map(key).distinct.zipWithIndex.toMap
+    seq.groupMap(key)(f)
+      .toSeq
+      .sortBy { case (k, _) => keyIndices(k) }
+  }
+
+  def jvmBuildTarget(d: JvmBuildTarget): bsp4j.JvmBuildTarget =
+    new bsp4j.JvmBuildTarget().tap { it =>
+      d.javaHome.foreach(jh => it.setJavaHome(jh.uri))
+      d.javaVersion.foreach(jv => it.setJavaVersion(jv))
+    }
 }

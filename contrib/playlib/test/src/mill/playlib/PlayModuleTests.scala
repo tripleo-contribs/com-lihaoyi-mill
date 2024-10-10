@@ -13,10 +13,10 @@ object PlayModuleTests extends TestSuite with PlayTestSuite {
       override def playVersion = crossPlayVersion
       override def scalaVersion = crossScalaVersion
       object test extends PlayTests
-      override def ivyDeps = T { super.ivyDeps() ++ Agg(ws()) }
+      override def ivyDeps = Task { super.ivyDeps() ++ Agg(ws()) }
     }
   }
-  val resourcePath: os.Path = os.Path(sys.env("MILL_TEST_RESOURCE_FOLDER")) / "playmulti"
+  val resourcePath: os.Path = os.Path(sys.env("MILL_TEST_RESOURCE_DIR")) / "playmulti"
 
   def tests: Tests = Tests {
     test("layout") {
@@ -112,10 +112,10 @@ object PlayModuleTests extends TestSuite with PlayTestSuite {
               os.RelPath("views/html/main$.class"),
               os.RelPath("views/html/main.class")
             ).map(
-              eval.outPath / "core" / scalaVersion / playVersion / "compile.dest" / "classes" / _
+              eval.outPath / "core" / scalaVersion / playVersion / "compile.dest/classes" / _
             )
             assert(
-              result.value.classes.path == eval.outPath / "core" / scalaVersion / playVersion / "compile.dest" / "classes",
+              result.value.classes.path == eval.outPath / "core" / scalaVersion / playVersion / "compile.dest/classes",
               outputClassFiles.nonEmpty,
               outputClassFiles.forall(expectedClassfiles.contains),
               outputClassFiles.size == 15,

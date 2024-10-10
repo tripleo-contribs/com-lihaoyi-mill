@@ -6,6 +6,7 @@ import mill.testkit.UnitTester
 import mill.testkit.TestBaseModule
 import utest._
 import mill.define.Target
+import mill.T
 import mill.scalajslib.api._
 
 object EsModuleRemapTests extends TestSuite {
@@ -20,7 +21,7 @@ object EsModuleRemapTests extends TestSuite {
 
     override def moduleKind = ModuleKind.ESModule
 
-    override def scalaJSImportMap: Target[Seq[ESModuleImportMapping]] = Seq(
+    override def scalaJSImportMap: T[Seq[ESModuleImportMapping]] = Seq(
       ESModuleImportMapping.Prefix("@stdlib/linspace", remapTo)
     )
 
@@ -33,14 +34,14 @@ object EsModuleRemapTests extends TestSuite {
     override def scalaJSSourceMap = false
     override def moduleKind = ModuleKind.ESModule
 
-    override def scalaJSImportMap: Target[Seq[ESModuleImportMapping]] = Seq(
+    override def scalaJSImportMap: T[Seq[ESModuleImportMapping]] = Seq(
       ESModuleImportMapping.Prefix("@stdlib/linspace", remapTo)
     )
 
     override lazy val millDiscover = Discover[this.type]
   }
 
-  val millSourcePath = os.Path(sys.env("MILL_TEST_RESOURCE_FOLDER")) / "esModuleRemap"
+  val millSourcePath = os.Path(sys.env("MILL_TEST_RESOURCE_DIR")) / "esModuleRemap"
 
   val tests: Tests = Tests {
     test("should remap the esmodule") {

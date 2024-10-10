@@ -1,5 +1,6 @@
 package mill.testkit
 
+import mill.define.Segments
 import mill.eval.Evaluator
 import mill.resolve.SelectMode
 import ujson.Value
@@ -68,7 +69,7 @@ object IntegrationTester {
 
       val debugArgs = Option.when(debugLog)("--debug")
 
-      val shellable: os.Shellable = (millExecutable, serverArgs, debugArgs, cmd)
+      val shellable: os.Shellable = (millExecutable, serverArgs, "--disable-ticker", debugArgs, cmd)
       val res0 = os.call(
         cmd = shellable,
         env = env,
@@ -90,7 +91,7 @@ object IntegrationTester {
       )
     }
 
-    private val millTestSuiteEnv = Map("MILL_TEST_SUITE" -> this.getClass().toString())
+    def millTestSuiteEnv: Map[String, String] = Map("MILL_TEST_SUITE" -> this.getClass().toString())
 
     /**
      * Helpers to read the `.json` metadata files belonging to a particular task
@@ -107,7 +108,7 @@ object IntegrationTester {
         val Seq((List(selector), _)) =
           mill.resolve.ParseArgs.apply(Seq(selector0), SelectMode.Separated).getOrElse(???)
 
-        val segments = selector._2.value.flatMap(_.pathSegments)
+        val segments = selector._2.getOrElse(Segments()).value.flatMap(_.pathSegments)
         os.read(workspacePath / "out" / segments.init / s"${segments.last}.json")
       }
 
